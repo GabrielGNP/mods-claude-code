@@ -61,27 +61,58 @@ claude plugin uninstall mods-config@mods-claude-code
 claude plugin marketplace remove mods-claude-code
 ```
 
-## Publicar una versión nueva (para quien mantiene el repositorio)
+## Desarrollar (para quien mantiene el repositorio)
 
-El mod se desarrolla en `~/.claude/mods/mods-config`, instalado desde un marketplace local.
-Para publicar:
+Cada equipo tiene el mod **instalado desde GitHub**, como cualquier usuario, y un **clon de
+este repositorio** donde se trabaja. El clon es la fuente: no hay otra copia que sincronizar.
 
-1. Subir `version` en `mods-config/.claude-plugin/plugin.json` del mod en desarrollo.
-   **Sin cambio de versión, `claude plugin update` no ve nada nuevo.**
-2. Traer el mod al repositorio, validarlo y correr sus pruebas:
+### En un equipo nuevo
+
+```powershell
+claude plugin marketplace add GabrielGNP/mods-claude-code
+claude plugin install mods-config@mods-claude-code --scope user
+git clone https://github.com/GabrielGNP/mods-claude-code.git
+```
+
+### Antes de empezar, en cualquier equipo
+
+```powershell
+git pull
+```
+
+### Probar sin tocar la instalación real
+
+```powershell
+.\probar.ps1
+```
+
+Abre una sesión de Claude Code que carga el mod **del clon** en lugar del instalado. Solo
+esa sesión lo usa: las demás siguen con la versión publicada. La copia en desarrollo se
+recarga sola al terminar el turno que guardó un cambio.
+
+La sesión de prueba guarda su configuración **aparte**: mover elementos en el panel
+mientras se prueba no cambia la disposición de la instalación real. Por eso, la primera
+vez arranca con la disposición inicial.
+
+Las pruebas automáticas, sin abrir una sesión:
+
+```powershell
+claude plugin test .\mods-config
+```
+
+### Publicar una versión
+
+1. Subir `version` en `mods-config/.claude-plugin/plugin.json`. **Sin cambio de versión,
+   `claude plugin update` no ve nada nuevo.**
+2. Publicar:
 
    ```powershell
-   .\sincronizar.ps1
+   .\publicar.ps1 -Mensaje "qué cambia"
    ```
 
-3. Commitear, etiquetar y subir:
-
-   ```powershell
-   git add -A
-   git commit -m "mods-config X.Y.Z: <qué cambia>"
-   git tag vX.Y.Z
-   git push --follow-tags
-   ```
+   Comprueba que la versión no esté publicada y que el clon no esté atrasado; valida, corre
+   las pruebas, commitea, etiqueta `vX.Y.Z` y sube. Se detiene en el primer paso que falla.
+3. Actualizar la instalación de cada equipo con los comandos de [Actualizar](#actualizar).
 
 ## Licencia
 
