@@ -1,0 +1,7 @@
+# Tipos y tsconfig que Claude Code genera al cargar el mod: se regeneran solos.
+mods-config/.claude-plugin/types/
+mods-config/tsconfig.json
+
+# Sistema
+.DS_Store
+Thumbs.db

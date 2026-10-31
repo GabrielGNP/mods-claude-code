@@ -1,0 +1,8 @@
+{
+  "name": "mods-config",
+  "version": "0.7.0",
+  "description": "Una franja configurable sobre el prompt: modelo, contexto, límites de uso, RAM del equipo, memoria de la sesión, estado de los MCP y voz al terminar cada turno. Cada elemento se ubica desde un panel; la configuración se guarda por usuario. Solo Windows.",
+  "author": { "name": "Gabriel Perero" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

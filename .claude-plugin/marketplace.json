@@ -1,0 +1,14 @@
+{
+  "name": "mods-claude-code",
+  "description": "Mods de Claude Code para Windows: una franja configurable sobre el prompt.",
+  "owner": {
+    "name": "Gabriel Perero"
+  },
+  "plugins": [
+    {
+      "name": "mods-config",
+      "source": "./mods-config",
+      "description": "Modelo, contexto, límites de uso, RAM, memoria de la sesión, estado de los MCP y voz, cada uno donde se prefiera."
+    }
+  ]
+}
