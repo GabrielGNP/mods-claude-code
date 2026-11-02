@@ -15,7 +15,10 @@ import {
 import { CONFIG_INICIAL } from '../hooks/disposicion'
 
 /** Lo último que se guardó en el almacén, como configuración. */
-type Guardada = { elementos: Record<string, { franja: boolean; linea: number; alineacion: string }>; mcps: string[] }
+type Guardada = {
+  elementos: Record<string, { franja: boolean; linea: number; alineacion: string; tablero: boolean }>
+  mcps: string[]
+}
 
 /*
  * El entorno de las pruebas tiene `setTimeout`, pero los tipos del motor no lo
@@ -120,7 +123,7 @@ const PANE = {
 } as const
 
 /** Lo que el fondo registra: lo guardado, los paneles abiertos, los typeperf y las consultas. */
-type Registro = { guardado: unknown[]; abiertos: string[]; lanzados: string[]; consultasMcp: number }
+type Registro = { guardado: unknown[]; abiertos: string[]; ahora: string[]; lanzados: string[]; consultasMcp: number }
 
 /**
  * El fondo: el almacén con lo que la prueba diga, las herramientas MCP disponibles,
@@ -136,7 +139,7 @@ const fondo = (
     typeperf = `"(PDH-CSV 4.0)","x"\r\n${LINEA(1580)}\r\n`,
   } = {},
 ) => {
-  const r: Registro = { guardado: [], abiertos: [], lanzados: [], consultasMcp: 0 }
+  const r: Registro = { guardado: [], abiertos: [], ahora: [], lanzados: [], consultasMcp: 0 }
   const archivos: Record<string, string> = {}
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
@@ -149,9 +152,18 @@ const fondo = (
   on('tool.list', () => ({ value: herramientas as never }))
   on('ui.open', ($, e) => {
     r.abiertos.push(e.id)
+    if (!r.ahora.includes(e.id)) r.ahora.push(e.id)
 
     return { value: { isPlaced: true } }
   })
+  on('ui.close', ($, e) => {
+    r.ahora = r.ahora.filter(id => id !== e.id)
+
+    return { value: undefined as never }
+  })
+  on('ui.panes', () => ({
+    value: r.ahora.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) as never,
+  }))
   on('env.get', ($, e) => ({ value: (e.name === 'TEMP' ? 'C:\\Temp' : undefined) as never }))
   on('fs.write', ($, e) => {
     archivos[e.path] = e.text
@@ -335,6 +347,101 @@ test('la memoria de la sesión: el proceso cuyo id es el de la sesión, en su un
   expect(await ui.find({ type: 'Text', text: /Sesión 349 MB/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /90%/ })).toBeDefined()
   await ui.unmount()
+})
+
+// ─── 0.8.0: el tablero lateral ──────────────────────────────────────────────
+
+const TABLERO = { ...PANE, requestId: 'mods-tablero', props: { ...PANE.props, title: 'Mods', placement: 'dock' } } as const
+
+test('t lleva un elemento al tablero: se guarda, el tablero se abre y lo muestra; sacarlo lo cierra', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const r = fondo(on)
+  await $.session.start({ cwd: '/proyecto', surface: 'terminal', isInteractive: true })
+  await asentar()
+  expect(r.ahora).not.toContain('mods-tablero')
+
+  const panel = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await panel.press({ key: 'elegir-ram' })
+  await panel.press({ key: 'tablero' })
+  expect((r.guardado.at(-1) as Guardada).elementos.ram?.tablero).toBe(true)
+  // Sigue también en la franja: son dos lugares independientes.
+  expect((r.guardado.at(-1) as Guardada).elementos.ram?.franja).toBe(true)
+  expect(r.ahora).toContain('mods-tablero')
+  expect(await panel.find({ type: 'Text', text: /línea 3 · derecha · 1º · en el tablero/ })).toBeDefined()
+
+  const tablero = await $.ui.mount({ ...TABLERO, surface: 'terminal' })
+  const linea = JSON.stringify(await tablero.find({ key: 'mods-tablero-linea-1' }))
+  expect(linea).toContain('90%')
+  // Lo que no se marcó no está.
+  expect(await tablero.find({ key: 'mods-tablero-linea-2' })).toBeUndefined()
+  await tablero.unmount()
+
+  // El último que sale cierra el tablero.
+  await panel.press({ key: 'tablero' })
+  expect((r.guardado.at(-1) as Guardada).elementos.ram?.tablero).toBe(false)
+  expect(r.ahora).not.toContain('mods-tablero')
+  await panel.unmount()
+})
+
+test('con algo marcado, el tablero se abre al iniciar; /tablero lo cierra y lo vuelve a abrir', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const r = fondo(on, {
+    almacen: {
+      version: 2,
+      elementos: { sesion: { franja: false, linea: 2, alineacion: 'derecha', orden: 1, tablero: true } },
+      mcps: [],
+    },
+  })
+  await $.session.start({ cwd: '/proyecto', surface: 'terminal', isInteractive: true })
+  await asentar()
+  expect(r.ahora).toContain('mods-tablero')
+
+  const cerrar = await $.command.run({ command: 'tablero', args: '', origin: 'user' } as never)
+  expect(cerrar.text).toBe('Tablero cerrado.')
+  expect(r.ahora).not.toContain('mods-tablero')
+  const abrir = await $.command.run({ command: 'tablero', args: '', origin: 'user' } as never)
+  expect(abrir.text).toBe('Tablero abierto.')
+  expect(r.ahora).toContain('mods-tablero')
+})
+
+test('con m se edita el tablero: las mismas teclas mueven ahí sin tocar la franja', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const r = fondo(on)
+  await $.session.start({ cwd: '/proyecto', surface: 'terminal', isInteractive: true })
+  await asentar()
+
+  const panel = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // La RAM y el ⚙ al tablero: cada uno en su línea.
+  await panel.press({ key: 'elegir-ram' })
+  await panel.press({ key: 'tablero' })
+  await panel.press({ key: 'elegir-config' })
+  await panel.press({ key: 'tablero' })
+
+  await panel.press({ key: 'editando' })
+  expect(await panel.find({ type: 'Text', text: /\[el tablero\]/ })).toBeDefined()
+  // El ⚙ sube a la línea de la RAM, a la derecha.
+  await panel.press({ key: 'subir' })
+  await panel.press({ key: 'derecha' })
+  const g = (r.guardado.at(-1) as { elementos: Record<string, { linea: number; alineacion: string; enTablero: { linea: number; alineacion: string } }> }).elementos
+  expect(g.config?.enTablero).toEqual({ linea: g.ram?.enTablero.linea, alineacion: 'derecha', orden: 0 })
+  // En la franja, el ⚙ sigue donde estaba.
+  expect(g.config).toMatchObject({ linea: 2, alineacion: 'izquierda' })
+
+  const tablero = await $.ui.mount({ ...TABLERO, surface: 'terminal' })
+  const linea = JSON.stringify(await tablero.find({ key: 'mods-tablero-linea-1' }))
+  expect(linea.indexOf('90%')).toBeLessThan(linea.indexOf('⚙ mods'))
+  await tablero.unmount()
+  await panel.unmount()
+})
+
+test('el tablero vacío dice cómo llenarlo', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  fondo(on)
+  await $.session.start({ cwd: '/proyecto', surface: 'terminal', isInteractive: true })
+  await asentar()
+  const tablero = await $.ui.mount({ ...TABLERO, surface: 'terminal' })
+  expect(await tablero.find({ type: 'Text', text: /pulse t/ })).toBeDefined()
+  await tablero.unmount()
 })
 
 test('en una sesión sin persona delante no mide', async ($, on) => {

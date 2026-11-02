@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, SessionContextUsage } from 'claude-code'
 
-import type { Alineacion, Config, ContextView, EstadoRam, ServidorMcp } from '../types'
+import type { Alineacion, Config, ContextView, EstadoRam, Lugar, ServidorMcp } from '../types'
 import {
   CLAVE_CONFIG,
   MARCA_MCP,
@@ -17,12 +17,16 @@ import {
   ELEMENTO_CONFIG,
   alinear,
   alternarFranja,
+  alternarTablero,
   describir,
   leerConfig,
   moverLinea,
   moverOrden,
   organizar,
+  posicion,
+  visibleEn,
 } from './disposicion'
+import type { Linea } from './disposicion'
 import {
   ANCHO_ETIQUETA,
   ANCHO_PCT,
@@ -85,6 +89,7 @@ const config = atom({ plugin: 'mods-config', key: 'config' } as const, CONFIG_IN
 const mcps = atom({ plugin: 'mods-config', key: 'mcps' } as const, [])
 const consultandoMcp = atom({ plugin: 'mods-config', key: 'consultandoMcp' } as const, false)
 const seleccion = atom({ plugin: 'mods-config', key: 'seleccion' } as const, ELEMENTO_CONFIG)
+const editando = atom({ plugin: 'mods-config', key: 'editando' } as const, 'franja')
 const contexto = atom({ plugin: 'mods-config', key: 'contexto' } as const, { kind: 'none' })
 const modelo = atom({ plugin: 'mods-config', key: 'modelo' } as const, null)
 const limites = atom({ plugin: 'mods-config', key: 'limites' } as const, [])
@@ -102,6 +107,9 @@ const deLaVentana = (c: SessionContextUsage): ContextView | null =>
 
 /** El id del panel de configuración. */
 const PANEL = 'mods-config'
+
+/** El id del tablero lateral: un elemento por renglón, los que se marcaron para él. */
+const TABLERO = 'mods-tablero'
 
 /** Cómo se llama cada elemento en el panel. */
 const NOMBRES: Record<string, string> = {
@@ -555,23 +563,58 @@ const guardar = async ($: Engine, cambio: (c: Config) => Config): Promise<Config
   return nueva
 }
 
+/** Los elementos marcados para el tablero, en el orden de la lista del panel. */
+const delTablero = (c: Config): string[] => ELEMENTOS.filter(id => c.elementos[id]?.tablero === true)
+
+/** Si un elemento se ve en algún lado: en la franja o en el tablero. */
+const seVe = (c: Config, id: string): boolean => c.elementos[id]?.franja === true || c.elementos[id]?.tablero === true
+
 /** Si la RAM o la memoria de la sesión se ven en algún lado: solo entonces se mide. */
-const ramVisible = (c: Config): boolean => c.elementos.ram?.franja === true || c.elementos.sesion?.franja === true
+const ramVisible = (c: Config): boolean => seVe(c, 'ram') || seVe(c, 'sesion')
+
+const abrirTablero = async ($: Engine): Promise<void> => {
+  // Sin `focus`: el tablero acompaña, no le quita el teclado al chat.
+  await $.ui.open({ id: TABLERO, title: 'Mods', columns: 48 }).catch(() => {})
+}
+
+const tableroAbierto = async ($: Engine): Promise<boolean> =>
+  (await $.ui.panes().catch(() => [])).some(p => p.id === TABLERO)
+
+/** Abre el tablero, o lo cierra si ya está abierto. Dice cómo quedó. */
+const alternarTableroAbierto = async ($: Engine): Promise<boolean> => {
+  if (await tableroAbierto($)) {
+    await $.ui.close({ id: TABLERO }).catch(() => {})
+    $.ui.invalidate('ui.render')
+
+    return false
+  }
+  await abrirTablero($)
+  $.ui.invalidate('ui.render')
+
+  return true
+}
 
 /**
  * Cambia la disposición y la guarda. Si con el cambio la RAM pasa a verse, arranca la
- * medición; si deja de verse, la medición se corta sola en su próxima lectura.
+ * medición; si deja de verse, la medición se corta sola en su próxima lectura. El primer
+ * elemento que entra al tablero lo abre, y el último que sale lo cierra.
  */
 const cambiarDisposicion = async ($: Engine, cambio: (c: Config) => Config): Promise<void> => {
+  const antes = delTablero(await read($, config)).length
   const nueva = await guardar($, cambio)
   ramEncendida = ramVisible(nueva)
   if (ramEncendida) void medir($).catch(() => {})
+
+  const despues = delTablero(nueva).length
+  if (antes === 0 && despues > 0) await abrirTablero($)
+  if (antes > 0 && despues === 0) await $.ui.close({ id: TABLERO }).catch(() => {})
 }
 
-/** Aplica un cambio al elemento elegido en el panel. */
-const sobreElegido = async ($: Engine, cambio: (c: Config, id: string) => Config): Promise<void> => {
+/** Aplica un cambio al elemento elegido en el panel, en el lugar que se está editando. */
+const sobreElegido = async ($: Engine, cambio: (c: Config, id: string, lugar: Lugar) => Config): Promise<void> => {
   const id = await read($, seleccion)
-  await cambiarDisposicion($, c => cambio(c, id))
+  const lugar = await read($, editando)
+  await cambiarDisposicion($, c => cambio(c, id, lugar))
 }
 
 const alternarServidor = async ($: Engine, servidor: string): Promise<void> => {
@@ -587,6 +630,196 @@ const abrirPanel = async ($: Engine): Promise<void> => {
   await $.ui.open({ id: PANEL, title: 'Configuración de mods', closeOnEscape: true })
 }
 
+/** La tabla de elementos que da `$.ui.resolve(e)`: la misma en la franja y en los paneles. */
+type Ui = ReturnType<Engine['ui']['resolve']>
+
+/**
+ * El dibujo de cada elemento, por su id; null si no tiene nada que mostrar. Lo usan la
+ * franja y el tablero. `agentId` es el subagente a la vista, si lo hay; `columnas`, el
+ * ancho del lugar donde se dibuja.
+ */
+const armarDibujos = async ($: Engine, ui: Ui, agentId: string | undefined, columnas: number): Promise<Record<string, unknown>> => {
+const { Box, Button, Text } = ui
+const c = await read($, config)
+  const servidores = await read($, mcps)
+  const medida = await read($, ram)
+  const ocupa = await read($, sesion)
+  const diciendo = await read($, hablando)
+  const vista = await read($, contexto)
+  const nombreModelo = await read($, modelo)
+  const ventanas = limits(await read($, limites))
+  const ahoraMs = await $.clock.now().catch(() => null)
+
+  const elegidos = servidores.filter(s => c.mcps.includes(s.nombre))
+
+  /*
+   * El dibujo de cada elemento, por su id; null si no tiene nada que mostrar. Agregar
+   * un elemento es agregar su dibujo acá y su ubicación inicial en disposicion.ts.
+   */
+  /*
+   * Lo que era context-bar. Qué está a la vista: la sesión principal, o el subagente
+   * abierto desde la lista de tareas (`view.agentId`). Los límites de uso son de la
+   * cuenta: valen igual para los dos.
+   */
+  let lineaModelo: string | null = nombreModelo
+  let ctx: Contexto | null =
+    vista.kind === 'none' ? null : vista.kind === 'measuring' ? { kind: 'measuring' } : { ...vista, kind: 'ready' }
+
+  if (agentId !== undefined) {
+    const anotados = await read($, pasos)
+    const paso = anotados[agentId]
+    const agentes = await $.agent.list().catch(() => [])
+    const tipo = agentes.find(agente => agente.id === agentId)?.type
+    lineaModelo =
+      paso === undefined ? (tipo ?? 'subagente') : tipo === undefined ? paso.model : `${tipo} · ${paso.model}`
+    ctx = contextoDeAgente(paso, anotados[''], vista.kind === 'ready' ? vista.window : null)
+  }
+
+  const elementoModelo = lineaModelo === null ? null : <Text color={modelTone(lineaModelo)}>{lineaModelo}</Text>
+
+  const elementoContexto =
+    ctx === null ? null : ctx.kind === 'measuring' ? (
+      <Text dimColor>Contexto [{bar(0)}] midiendo…</Text>
+    ) : ctx.kind === 'tokens' ? (
+      <Text dimColor>Contexto {fmt(ctx.tokens)}</Text>
+    ) : (
+      <Box>
+        <Text dimColor>Contexto </Text>
+        <Text color={tonoLimite(ctx.percent)}>
+          [{bar(ctx.percent)}] {ctx.estimated ? '~' : ''}
+          {ctx.percent}%
+        </Text>
+        <Text dimColor>{tail(ctx.tokens, ctx.window, null)}</Text>
+      </Box>
+    )
+
+  /*
+   * Un límite de uso. Cada segmento de largo variable va en una caja de ancho fijo:
+   * dos límites en la misma alineación quedan con sus barras en columna, sea cual
+   * sea el porcentaje o el tiempo que les quede.
+   */
+  const ventana = (limite: Limit) => {
+    const falta = ahoraMs === null ? null : until(limite.resetsAt, ahoraMs)
+    const t = tonoLimite(limite.percent)
+
+    return (
+      <Box key={`limite-${limite.label}`}>
+        <Box width={ANCHO_ETIQUETA}>
+          <Text color={t}>{limite.label}</Text>
+        </Box>
+        <Text color={t}> [{bar(limite.percent, SESION)}] </Text>
+        <Box width={ANCHO_PCT} justifyContent="flex-end">
+          <Text color={t}>{limite.percent}%</Text>
+        </Box>
+        <Box width={ANCHO_TIEMPO}>
+          <Text dimColor>{falta === null ? '' : ` · ${falta}`}</Text>
+        </Box>
+      </Box>
+    )
+  }
+  // La ventana corta en su elemento; la larga, y cualquier otra que informe el motor, en el otro.
+  const [corta, ...resto] = ventanas
+
+  return {
+    voz:
+      diciendo === null ? null : (
+        <Box key="mods-config-voz" width={columnas}>
+          {diciendo.detenible ? (
+            <Button key="callar" plain label={'\u{1F50A}'} hotkey="1" onPress={() => detener($)} />
+          ) : (
+            <Text>{'\u{1F50A}'}</Text>
+          )}
+          <Text dimColor wrap="truncate-end">
+            {' '}
+            {diciendo.texto}
+          </Text>
+        </Box>
+      ),
+    modelo: elementoModelo,
+    contexto: elementoContexto,
+    'limite-5h': corta === undefined ? null : ventana(corta),
+    'limite-7d': resto.length === 0 ? null : <Box flexDirection="column">{resto.map(ventana)}</Box>,
+    [ELEMENTO_CONFIG]: (
+      <Button key="abrir-config" plain onPress={() => abrirPanel($)}>
+        <Text dimColor>⚙ mods</Text>
+      </Button>
+    ),
+    ram: (() => {
+      if (medida.kind === 'esperando') return null
+      if (medida.kind === 'no disponible') return <Text dimColor>RAM · no disponible</Text>
+      if (medida.totalMB === null) return <Text dimColor>RAM · {gb(medida.libreMB)} GB libres</Text>
+
+      const porcentaje = enUso(medida.libreMB, medida.totalMB)
+      const color = tono(porcentaje)
+
+      return (
+        <Box>
+          <Text dimColor>RAM </Text>
+          <Text color={color}>{barra(porcentaje, ANCHO)}</Text>
+          <Text color={color} bold={color !== undefined}>
+            {' '}
+            {String(porcentaje).padStart(3)}%
+          </Text>
+          <Text dimColor>
+            {'  '}
+            {gb(medida.totalMB - medida.libreMB)} / {gb(medida.totalMB)} GB
+          </Text>
+        </Box>
+      )
+    })(),
+    sesion: ocupa === null ? null : <Text dimColor>Sesión {tamano(ocupa)}</Text>,
+    // Los MCP, juntos: si son muchos, siguen en la línea siguiente.
+    mcp:
+      elegidos.length === 0 ? null : (
+        <Box key="mods-config-mcp" flexWrap="wrap" columnGap={3}>
+          {elegidos.map(s => (
+            <Text key={`mcp-${s.nombre}`} color={MARCA_MCP[s.estado].tono}>
+              {MARCA_MCP[s.estado].glifo} {s.etiqueta}
+            </Text>
+          ))}
+        </Box>
+      ),
+  }
+}
+
+/**
+ * Las líneas de un lugar, ya dibujadas. Cada línea: sin nada al centro, izquierda y
+ * derecha en los extremos; con algo al centro, tres zonas iguales, para que el centro
+ * quede centrado de verdad. Las líneas sin nada que mostrar no se dibujan.
+ */
+const armarLineas = (ui: Ui, lineas: Linea[], dibujos: Record<string, unknown>, prefijo: string): never[] => {
+  const { Box } = ui
+  const de = (ids: string[]) => ids.map(id => dibujos[id]).filter(d => d !== null && d !== undefined) as never[]
+  const zona = (nodos: never[], justificar: 'flex-start' | 'center' | 'flex-end') => (
+    <Box width={0} flexGrow={1} justifyContent={justificar} columnGap={2}>
+      {nodos}
+    </Box>
+  )
+
+  return lineas
+    .map(l => ({ izquierda: de(l.izquierda), centro: de(l.centro), derecha: de(l.derecha) }))
+    .filter(z => z.izquierda.length + z.centro.length + z.derecha.length > 0)
+    .map((z, i) => {
+      const clave = `${prefijo}-${i + 1}`
+      if (z.centro.length === 0) {
+        return (
+          <Box key={clave} justifyContent="space-between" columnGap={2}>
+            <Box columnGap={2}>{z.izquierda}</Box>
+            <Box columnGap={2}>{z.derecha}</Box>
+          </Box>
+        )
+      }
+
+      return (
+        <Box key={clave} columnGap={2}>
+          {zona(z.izquierda, 'flex-start')}
+          {zona(z.centro, 'center')}
+          {zona(z.derecha, 'flex-end')}
+        </Box>
+      )
+    }) as never[]
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const resultado = await next(e)
@@ -598,6 +831,9 @@ export const register: Register = on => {
 
     await $.command
       .register({ name: 'mods-config', description: 'Abre la configuración de los mods', immediate: true })
+      .catch(() => {})
+    await $.command
+      .register({ name: 'tablero', description: 'Abre o cierra el tablero lateral de los mods', immediate: true })
       .catch(() => {})
     if (interactiva) {
       // `immediate`: `/callar` corta aunque Claude esté a mitad de un turno.
@@ -652,6 +888,11 @@ export const register: Register = on => {
     }
 
     if (interactiva && ramEncendida) void medir($).catch(() => {})
+    /*
+     * Con algo marcado, el tablero se abre solo. Sin que la persona lo pida, el motor lo
+     * dibuja desde 144 columnas (110 si alguna vez lo abrió); más angosto, espera.
+     */
+    if (interactiva && delTablero(guardada).length > 0) void abrirTablero($)
 
     return resultado
   })
@@ -749,6 +990,13 @@ export const register: Register = on => {
     return { text: 'Configuración de mods abierta.' }
   })
 
+  on('command.run', { command: 'tablero' }, async $ => {
+    if (!(await alternarTableroAbierto($))) return { text: 'Tablero cerrado.' }
+    const vacio = delTablero(await read($, config)).length === 0
+
+    return { text: vacio ? 'Tablero abierto. Está vacío: márquele elementos con t en /mods-config.' : 'Tablero abierto.' }
+  })
+
   // ─── la franja: los elementos, cada uno en su línea y alineación ──────────
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -756,183 +1004,10 @@ export const register: Register = on => {
     const beneath = await next(e)
     if (e.props.hasSurvey) return beneath
 
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
     const c = await read($, config)
-    const servidores = await read($, mcps)
-    const medida = await read($, ram)
-    const ocupa = await read($, sesion)
-    const diciendo = await read($, hablando)
-    const vista = await read($, contexto)
-    const nombreModelo = await read($, modelo)
-    const ventanas = limits(await read($, limites))
-    const ahoraMs = await $.clock.now().catch(() => null)
-
-    const elegidos = servidores.filter(s => c.mcps.includes(s.nombre))
-
-    /*
-     * El dibujo de cada elemento, por su id; null si no tiene nada que mostrar. Agregar
-     * un elemento es agregar su dibujo acá y su ubicación inicial en disposicion.ts.
-     */
-    /*
-     * Lo que era context-bar. Qué está a la vista: la sesión principal, o el subagente
-     * abierto desde la lista de tareas (`view.agentId`). Los límites de uso son de la
-     * cuenta: valen igual para los dos.
-     */
-    const agentId = e.props.view.agentId
-    let lineaModelo: string | null = nombreModelo
-    let ctx: Contexto | null =
-      vista.kind === 'none' ? null : vista.kind === 'measuring' ? { kind: 'measuring' } : { ...vista, kind: 'ready' }
-
-    if (agentId !== undefined) {
-      const anotados = await read($, pasos)
-      const paso = anotados[agentId]
-      const agentes = await $.agent.list().catch(() => [])
-      const tipo = agentes.find(agente => agente.id === agentId)?.type
-      lineaModelo =
-        paso === undefined ? (tipo ?? 'subagente') : tipo === undefined ? paso.model : `${tipo} · ${paso.model}`
-      ctx = contextoDeAgente(paso, anotados[''], vista.kind === 'ready' ? vista.window : null)
-    }
-
-    const elementoModelo = lineaModelo === null ? null : <Text color={modelTone(lineaModelo)}>{lineaModelo}</Text>
-
-    const elementoContexto =
-      ctx === null ? null : ctx.kind === 'measuring' ? (
-        <Text dimColor>Contexto [{bar(0)}] midiendo…</Text>
-      ) : ctx.kind === 'tokens' ? (
-        <Text dimColor>Contexto {fmt(ctx.tokens)}</Text>
-      ) : (
-        <Box>
-          <Text dimColor>Contexto </Text>
-          <Text color={tonoLimite(ctx.percent)}>
-            [{bar(ctx.percent)}] {ctx.estimated ? '~' : ''}
-            {ctx.percent}%
-          </Text>
-          <Text dimColor>{tail(ctx.tokens, ctx.window, null)}</Text>
-        </Box>
-      )
-
-    /*
-     * Un límite de uso. Cada segmento de largo variable va en una caja de ancho fijo:
-     * dos límites en la misma alineación quedan con sus barras en columna, sea cual
-     * sea el porcentaje o el tiempo que les quede.
-     */
-    const ventana = (limite: Limit) => {
-      const falta = ahoraMs === null ? null : until(limite.resetsAt, ahoraMs)
-      const t = tonoLimite(limite.percent)
-
-      return (
-        <Box key={`limite-${limite.label}`}>
-          <Box width={ANCHO_ETIQUETA}>
-            <Text color={t}>{limite.label}</Text>
-          </Box>
-          <Text color={t}> [{bar(limite.percent, SESION)}] </Text>
-          <Box width={ANCHO_PCT} justifyContent="flex-end">
-            <Text color={t}>{limite.percent}%</Text>
-          </Box>
-          <Box width={ANCHO_TIEMPO}>
-            <Text dimColor>{falta === null ? '' : ` · ${falta}`}</Text>
-          </Box>
-        </Box>
-      )
-    }
-    // La ventana corta en su elemento; la larga, y cualquier otra que informe el motor, en el otro.
-    const [corta, ...resto] = ventanas
-
-    const dibujos: Record<string, unknown> = {
-      voz:
-        diciendo === null ? null : (
-          <Box key="mods-config-voz" width={e.props.bodyColumns}>
-            {diciendo.detenible ? (
-              <Button key="callar" plain label={'\u{1F50A}'} hotkey="1" onPress={() => detener($)} />
-            ) : (
-              <Text>{'\u{1F50A}'}</Text>
-            )}
-            <Text dimColor wrap="truncate-end">
-              {' '}
-              {diciendo.texto}
-            </Text>
-          </Box>
-        ),
-      modelo: elementoModelo,
-      contexto: elementoContexto,
-      'limite-5h': corta === undefined ? null : ventana(corta),
-      'limite-7d': resto.length === 0 ? null : <Box flexDirection="column">{resto.map(ventana)}</Box>,
-      [ELEMENTO_CONFIG]: (
-        <Button key="abrir-config" plain onPress={() => abrirPanel($)}>
-          <Text dimColor>⚙ mods</Text>
-        </Button>
-      ),
-      ram: (() => {
-        if (medida.kind === 'esperando') return null
-        if (medida.kind === 'no disponible') return <Text dimColor>RAM · no disponible</Text>
-        if (medida.totalMB === null) return <Text dimColor>RAM · {gb(medida.libreMB)} GB libres</Text>
-
-        const porcentaje = enUso(medida.libreMB, medida.totalMB)
-        const color = tono(porcentaje)
-
-        return (
-          <Box>
-            <Text dimColor>RAM </Text>
-            <Text color={color}>{barra(porcentaje, ANCHO)}</Text>
-            <Text color={color} bold={color !== undefined}>
-              {' '}
-              {String(porcentaje).padStart(3)}%
-            </Text>
-            <Text dimColor>
-              {'  '}
-              {gb(medida.totalMB - medida.libreMB)} / {gb(medida.totalMB)} GB
-            </Text>
-          </Box>
-        )
-      })(),
-      sesion: ocupa === null ? null : <Text dimColor>Sesión {tamano(ocupa)}</Text>,
-      // Los MCP, juntos: si son muchos, siguen en la línea siguiente.
-      mcp:
-        elegidos.length === 0 ? null : (
-          <Box key="mods-config-mcp" flexWrap="wrap" columnGap={3}>
-            {elegidos.map(s => (
-              <Text key={`mcp-${s.nombre}`} color={MARCA_MCP[s.estado].tono}>
-                {MARCA_MCP[s.estado].glifo} {s.etiqueta}
-              </Text>
-            ))}
-          </Box>
-        ),
-    }
-
-    type Nodo = typeof beneath
-    const de = (ids: string[]): Nodo[] => ids.map(id => dibujos[id]).filter(d => d !== null && d !== undefined) as Nodo[]
-
-    /*
-     * Cada línea: sin nada al centro, izquierda y derecha en los extremos; con algo al
-     * centro, tres zonas iguales, para que el centro quede centrado de verdad.
-     */
-    const lineas = organizar(c)
-      .map(l => ({ l, zonas: { izquierda: de(l.izquierda), centro: de(l.centro), derecha: de(l.derecha) } }))
-      .filter(({ zonas }) => zonas.izquierda.length + zonas.centro.length + zonas.derecha.length > 0)
-      .map(({ l, zonas }, i) => {
-        const clave = `mods-config-linea-${i + 1}`
-        if (zonas.centro.length === 0) {
-          return (
-            <Box key={clave} justifyContent="space-between" columnGap={2}>
-              <Box columnGap={2}>{zonas.izquierda}</Box>
-              <Box columnGap={2}>{zonas.derecha}</Box>
-            </Box>
-          )
-        }
-        const zona = (nodos: Nodo[], justificar: 'flex-start' | 'center' | 'flex-end') => (
-          <Box width={0} flexGrow={1} justifyContent={justificar} columnGap={2}>
-            {nodos}
-          </Box>
-        )
-
-        return (
-          <Box key={clave} columnGap={2}>
-            {zona(zonas.izquierda, 'flex-start')}
-            {zona(zonas.centro, 'center')}
-            {zona(zonas.derecha, 'flex-end')}
-          </Box>
-        )
-      })
+    const dibujos = await armarDibujos($, $.ui.resolve(e), e.props.view.agentId, e.props.bodyColumns)
+    const lineas = armarLineas($.ui.resolve(e), organizar(c, 'franja'), dibujos, 'mods-config-linea')
 
     // Con `key` en una Box: la de un Text no se conserva en el árbol.
     const separacion = (clave: string) => (
@@ -963,6 +1038,26 @@ export const register: Register = on => {
     )
   })
 
+  // ─── el tablero lateral: su propia disposición, como la franja ────────────
+
+  on('ui.render', { component: 'Pane', requestId: TABLERO }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const c = await read($, config)
+    if (delTablero(c).length === 0) {
+      return <Text dimColor>Vacío. En /mods-config, elija un elemento y pulse t para traerlo acá.</Text>
+    }
+    const dibujos = await armarDibujos($, $.ui.resolve(e), e.props.view.agentId, e.props.bodyColumns)
+    // Lo que todavía no tiene nada que mostrar (la voz en silencio, la RAM antes de medir) no ocupa renglón.
+    const lineas = armarLineas($.ui.resolve(e), organizar(c, 'tablero'), dibujos, 'mods-tablero-linea')
+    if (lineas.length === 0) return <Text dimColor>Esperando los primeros datos…</Text>
+
+    return (
+      <Box flexDirection="column">
+        {lineas}
+      </Box>
+    )
+  })
+
   // ─── el panel de configuración ────────────────────────────────────────────
 
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
@@ -971,26 +1066,50 @@ export const register: Register = on => {
     const lista = await read($, mcps)
     const consultando = await read($, consultandoMcp)
     const elegido = await read($, seleccion)
+    const lugar = await read($, editando)
+    const abierto = await tableroAbierto($)
     const marca = (si: boolean) => (si ? '[x]' : '[ ]')
     const u = c.elementos[elegido]
+    const enLaFranja = lugar === 'franja'
+
+    /** Dónde está un elemento en el lugar que se edita, o que no está ahí. */
+    const donde = (ub: NonNullable<typeof u>) =>
+      visibleEn(ub, lugar) ? describir(posicion(ub, lugar)) : enLaFranja ? 'oculto' : 'fuera del tablero'
 
     /** Un botón de acción sobre el elemento elegido: su tecla y su texto. */
-    const accion = (clave: string, tecla: string, texto: string, cambio: (c: Config, id: string) => Config) => (
+    const accion = (clave: string, tecla: string, texto: string, cambio: (c: Config, id: string, lugar: Lugar) => Config) => (
       <Button key={clave} plain hotkey={tecla} onPress={() => sobreElegido($, cambio)}>
         <Text>{texto}</Text>
       </Button>
     )
-    const a = (alineacion: Alineacion) => (cfg: Config, id: string) => alinear(cfg, id, alineacion)
+    const a = (alineacion: Alineacion) => (cfg: Config, id: string, l: Lugar) => alinear(cfg, id, alineacion, l)
+    const pestana = (l: Lugar, texto: string) => (
+      <Text bold={lugar === l} color={lugar === l ? 'claude' : undefined} dimColor={lugar !== l}>
+        {lugar === l ? `[${texto}]` : ` ${texto} `}
+      </Text>
+    )
 
     return (
       <Box flexDirection="column">
         <Box>
+          <Text bold>Editando </Text>
+          <Button key="editando" plain hotkey="m" onPress={() => update($, editando, (l): Lugar => (l === 'franja' ? 'tablero' : 'franja'))}>
+            <Text>
+              {pestana('franja', 'la franja')}
+              {pestana('tablero', 'el tablero')}
+            </Text>
+          </Button>
+          <Text dimColor> (m cambia)</Text>
+        </Box>
+        <Box marginTop={1}>
           <Text bold>Elementos </Text>
           <Text dimColor>(1-9 elige uno; después, las teclas de abajo lo mueven)</Text>
         </Box>
         {ELEMENTOS.map((id, i) => {
           const ub = c.elementos[id]
           if (ub === undefined) return null
+          // Dónde está en el otro lugar, como referencia.
+          const otro = enLaFranja ? (ub.tablero ? ' · en el tablero' : '') : ub.franja ? ' · en la franja' : ''
 
           return (
             <Box key={`elemento-${id}`}>
@@ -1000,7 +1119,11 @@ export const register: Register = on => {
                   {NOMBRES[id] ?? id}
                 </Text>
               </Button>
-              <Text dimColor>{'   '}{ub.franja ? describir(ub) : 'oculto'}</Text>
+              <Text dimColor>
+                {'   '}
+                {donde(ub)}
+                {otro}
+              </Text>
             </Box>
           )
         })}
@@ -1008,19 +1131,20 @@ export const register: Register = on => {
         {u === undefined ? null : (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>
-              Mover «{NOMBRES[elegido] ?? elegido}» <Text dimColor>({u.franja ? describir(u) : 'oculto'})</Text>
+              Mover «{NOMBRES[elegido] ?? elegido}» en {enLaFranja ? 'la franja' : 'el tablero'} <Text dimColor>({donde(u)})</Text>
             </Text>
             <Box flexWrap="wrap" columnGap={2}>
-              {accion('subir', 's', 'subir de línea', (cfg, id) => moverLinea(cfg, id, -1))}
-              {accion('bajar', 'b', 'bajar de línea', (cfg, id) => moverLinea(cfg, id, 1))}
+              {accion('subir', 's', 'subir de línea', (cfg, id, l) => moverLinea(cfg, id, -1, l))}
+              {accion('bajar', 'b', 'bajar de línea', (cfg, id, l) => moverLinea(cfg, id, 1, l))}
               {accion('izquierda', 'i', 'izquierda', a('izquierda'))}
               {accion('centro', 'c', 'centro', a('centro'))}
               {accion('derecha', 'd', 'derecha', a('derecha'))}
-              {accion('antes', 'a', 'antes', (cfg, id) => moverOrden(cfg, id, -1))}
-              {accion('luego', 'l', 'después', (cfg, id) => moverOrden(cfg, id, 1))}
+              {accion('antes', 'a', 'antes', (cfg, id, l) => moverOrden(cfg, id, -1, l))}
+              {accion('luego', 'l', 'después', (cfg, id, l) => moverOrden(cfg, id, 1, l))}
               {elegido === ELEMENTO_CONFIG
                 ? null
-                : accion('ver', 'v', u.franja ? 'ocultar' : 'mostrar', (cfg, id) => alternarFranja(cfg, id))}
+                : accion('ver', 'v', u.franja ? 'ocultar de la franja' : 'mostrar en la franja', (cfg, id) => alternarFranja(cfg, id))}
+              {accion('tablero', 't', u.tablero ? 'sacar del tablero' : 'al tablero', (cfg, id) => alternarTablero(cfg, id))}
             </Box>
           </Box>
         )}
@@ -1055,9 +1179,15 @@ export const register: Register = on => {
           <Button key="cerrar" role="dismiss" hotkey="x" onPress={() => $.ui.close({ id: PANEL })}>
             Cerrar
           </Button>
+          <Text>{'  '}</Text>
+          <Button key="abrir-tablero" plain hotkey="p" onPress={() => alternarTableroAbierto($)}>
+            <Text>{abierto ? 'Cerrar el tablero' : 'Abrir el tablero'}</Text>
+          </Button>
+        </Box>
+        <Box>
           <Text dimColor>
-            {'  '}Se guarda para tu usuario · 1-9 elige · s/b línea · i/c/d alineación · a/l orden · v mostrar u ocultar ·
-            r actualiza MCP · Tab y Enter para los MCP · x o Esc cierra
+            Se guarda por usuario · m franja o tablero · 1-9 elige · s/b línea · i/c/d alineación · a/l orden ·
+            v franja · t tablero · p abre o cierra el tablero · r actualiza MCP · Tab y Enter para los MCP · x o Esc cierra
           </Text>
         </Box>
       </Box>

@@ -118,5 +118,70 @@ test('antes y después cambian el orden dentro de la misma línea y alineación'
 test('ocultar saca un elemento de la franja; el tablero se alterna aparte', async () => {
   expect(organizar(alternarFranja(CONFIG_INICIAL, 'ram'))[2]?.derecha).toEqual(['sesion'])
   expect(ubic(alternarTablero(CONFIG_INICIAL, 'ram'), 'ram')?.tablero).toBe(true)
-  expect(describir({ franja: true, linea: 1, alineacion: 'centro', orden: 0, tablero: false })).toBe('línea 2 · centro · 1º')
+  expect(describir({ linea: 1, alineacion: 'centro', orden: 0 })).toBe('línea 2 · centro · 1º')
+})
+
+// ─── 0.8.0: el tablero tiene su propia disposición ─────────────────────────
+
+/** El tablero con la RAM, la sesión y el contexto, en ese orden: cada uno en su línea. */
+const conTablero = () => alternarTablero(alternarTablero(alternarTablero(CONFIG_INICIAL, 'ram'), 'sesion'), 'contexto')
+
+/**
+ * Cómo se ve el tablero, línea por línea, sin el número interno de cada línea: los
+ * elementos que no están en el tablero también ocupan números, aunque no se dibujen.
+ */
+const tablero = (c: ReturnType<typeof leerConfig>) => organizar(c, 'tablero').map(({ linea: _, ...zonas }) => zonas)
+
+test('entrar al tablero deja al elemento en una línea nueva, al final', async () => {
+  expect(tablero(conTablero())).toEqual([
+    { izquierda: ['ram'], centro: [], derecha: [] },
+    { izquierda: ['sesion'], centro: [], derecha: [] },
+    { izquierda: ['contexto'], centro: [], derecha: [] },
+  ])
+  // La franja no cambia.
+  expect(organizar(conTablero(), 'franja')).toEqual(INICIAL)
+})
+
+test('mover en el tablero no toca la franja, y al revés', async () => {
+  const c = alinear(moverLinea(conTablero(), 'sesion', -1, 'tablero'), 'sesion', 'derecha', 'tablero')
+  expect(tablero(c)).toEqual([
+    { izquierda: ['ram'], centro: [], derecha: ['sesion'] },
+    { izquierda: ['contexto'], centro: [], derecha: [] },
+  ])
+  expect(organizar(c, 'franja')).toEqual(INICIAL)
+
+  const f = moverLinea(conTablero(), 'ram', 1, 'franja')
+  expect(organizar(f, 'tablero')).toEqual(organizar(conTablero(), 'tablero'))
+})
+
+test('el orden dentro del tablero se cambia con antes y después', async () => {
+  const juntos = moverLinea(conTablero(), 'sesion', -1, 'tablero')
+  expect(organizar(juntos, 'tablero')[0]?.izquierda).toEqual(['ram', 'sesion'])
+  expect(organizar(moverOrden(juntos, 'sesion', -1, 'tablero'), 'tablero')[0]?.izquierda).toEqual(['sesion', 'ram'])
+})
+
+test('subir y bajar saltan las líneas que solo tienen elementos ocultos', async () => {
+  // La RAM y el contexto en el tablero, con la sesión (fuera del tablero) entre los dos.
+  const c = alternarTablero(conTablero(), 'sesion')
+  expect(organizar(c, 'tablero').map(l => l.izquierda)).toEqual([['ram'], ['contexto']])
+  // Bajar la RAM la lleva directo a la línea del contexto, no a la de la sesión oculta.
+  expect(organizar(moverLinea(c, 'ram', 1, 'tablero'), 'tablero').map(l => l.izquierda)).toEqual([['contexto', 'ram']])
+})
+
+test('una configuración en memoria sin posiciones de tablero no rompe el dibujo', async () => {
+  // Así queda la memoria de la sesión cuando el mod se recarga desde una versión anterior.
+  const vieja = { ...CONFIG_INICIAL, elementos: { ram: { franja: true, linea: 2, alineacion: 'derecha', orden: 0, tablero: true } } }
+  expect(tablero(vieja as never)).toEqual([{ izquierda: ['ram'], centro: [], derecha: [] }])
+})
+
+test('una configuración guardada antes de 0.8.0 tiene el tablero apilado', async () => {
+  const c = leerConfig({
+    version: 2,
+    elementos: {
+      ram: { franja: true, linea: 2, alineacion: 'derecha', orden: 0, tablero: true },
+      voz: { franja: true, linea: 4, alineacion: 'izquierda', orden: 0, tablero: true },
+    },
+    mcps: [],
+  })
+  expect(organizar(c, 'tablero').map(l => l.izquierda)).toEqual([['ram'], ['voz']])
 })

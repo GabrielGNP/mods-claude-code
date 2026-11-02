@@ -8,7 +8,9 @@
 
 param([Parameter(Mandatory)][string]$Mensaje)
 
-$ErrorActionPreference = 'Stop'
+# Cada paso se juzga por su código de salida, no por lo que escribe en stderr: git avisa
+# ahí cosas inofensivas (finales de línea, progreso) que PowerShell 5 tomaría como error.
+$ErrorActionPreference = 'Continue'
 $repo = $PSScriptRoot
 $mod = Join-Path $repo 'mods-config'
 
@@ -16,6 +18,7 @@ $version = (Get-Content (Join-Path $mod '.claude-plugin\plugin.json') -Raw -Enco
 $tag = "v$version"
 
 git -C $repo fetch --tags --quiet
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo consultar GitHub (git fetch).' }
 if (git -C $repo tag --list $tag) { throw "La versión $version ya está publicada ($tag). Suba la versión en plugin.json." }
 if (git -C $repo status --porcelain --branch | Select-String 'behind') { throw 'El repositorio está atrasado respecto de GitHub: corra git pull primero.' }
 
@@ -27,9 +30,11 @@ claude plugin test $mod
 if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallaron: no se publica.' }
 
 git -C $repo add -A
+if ($LASTEXITCODE -ne 0) { throw 'No se pudieron agregar los cambios (git add).' }
 git -C $repo commit -m "mods-config ${version}: $Mensaje"
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo commitear (¿no hay cambios?).' }
 git -C $repo tag -a $tag -m "mods-config $version"
+if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el tag $tag." }
 git -C $repo push --follow-tags
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo subir a GitHub. El commit y el tag quedaron locales: repita git push --follow-tags.' }
 

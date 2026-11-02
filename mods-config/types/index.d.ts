@@ -36,17 +36,29 @@ export type Hablando = {
 /** Dónde va un elemento dentro de su línea. */
 export type Alineacion = 'izquierda' | 'centro' | 'derecha'
 
-/** Dónde se ve un elemento: en la franja sobre el chat, y en el tablero lateral. */
-export type Ubicacion = {
-  /** Si se ve en la franja. */
-  franja: boolean
-  /** La línea de la franja, desde 0, de arriba hacia abajo. */
+/** Un lugar donde se dibujan elementos, cada uno con su propia disposición. */
+export type Lugar = 'franja' | 'tablero'
+
+/** Dónde va un elemento dentro de un lugar. */
+export type Posicion = {
+  /** La línea, desde 0, de arriba hacia abajo. */
   linea: number
   alineacion: Alineacion
   /** El orden entre los de su misma línea y alineación, desde 0. */
   orden: number
+}
+
+/**
+ * Dónde se ve un elemento: en la franja sobre el chat, y en el tablero lateral. La
+ * posición en la franja va en los campos de arriba; la del tablero, en `enTablero`.
+ */
+export type Ubicacion = Posicion & {
+  /** Si se ve en la franja. */
+  franja: boolean
   /** Si se ve en el tablero lateral. */
   tablero: boolean
+  /** Su posición en el tablero, independiente de la de la franja. */
+  enTablero: Posicion
 }
 
 /**
@@ -83,6 +95,8 @@ declare module 'claude-code' {
       consultandoMcp: boolean
       /** El elemento elegido en el panel, sobre el que actúan las teclas de mover. */
       seleccion: string
+      /** El lugar cuya disposición se edita en el panel. */
+      editando: Lugar
       /** La ventana de contexto de la sesión principal. */
       contexto: ContextView
       /** El modelo del loop principal, como lo muestra `/model`; null si no se pudo leer. */

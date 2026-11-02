@@ -44,11 +44,14 @@ dentro de esa alineación. En el panel se elige uno y se mueve:
 
 | Para | Tecla |
 |---|---|
+| Elegir qué se edita: la franja o el tablero | `m` |
 | Elegir un elemento | `1`–`9` |
 | Subir o bajar de línea | `s` / `b` (bajar desde la última abre una línea nueva) |
 | Alinear a la izquierda, al centro o a la derecha | `i` / `c` / `d` |
 | Antes o después dentro de su alineación | `a` / `l` |
 | Mostrar u ocultar (el `⚙` no se oculta) | `v` |
+| Llevar al tablero lateral, o sacarlo | `t` |
+| Abrir o cerrar el tablero lateral | `p` |
 | Volver a consultar el estado de los MCP | `r` |
 | Cerrar | `x` o `Esc` |
 
@@ -59,8 +62,24 @@ moverse entre los botones.
 Una línea sin nada al centro reparte izquierda y derecha en los extremos; con algo al
 centro, se divide en tres zonas iguales. Las líneas que quedan vacías se cierran.
 
-**La configuración se guarda por usuario**, en el almacén del mod dentro de tu
+**La configuración se guarda por usuario**, en el almacén del mod dentro de la
 configuración de Claude Code: vale en todas las sesiones y en todos los proyectos.
+
+## El tablero lateral
+
+Un panel aparte con los elementos que se marquen con `t`. Un elemento puede estar en la
+franja, en el tablero o en los dos, y en cada lugar tiene **su propia posición**: con `m`
+el panel pasa a editar el tablero, y las mismas teclas (`s`/`b`, `i`/`c`/`d`, `a`/`l`) lo
+acomodan ahí sin tocar la franja. Un elemento que entra al tablero llega en una línea
+nueva, al final.
+
+- En pantalla completa y desde 110 columnas, el tablero va **al costado de la
+  conversación**; en una terminal más angosta, **sobre el prompt**.
+- Se abre solo al marcar el primer elemento, y se cierra al sacar el último.
+- Al iniciar una sesión se abre solo si tiene algo marcado. Cuando lo abre el mod por su
+  cuenta, Claude Code lo dibuja desde 144 columnas (110 si alguna vez se abrió a mano);
+  más angosto, espera a que se abra con `/tablero`.
+- `/tablero`, o `p` en el panel, lo abren o lo cierran.
 
 ## Cómo sabe el estado de los MCP
 
