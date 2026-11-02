@@ -8,17 +8,23 @@ del chat (solo si otros mods dibujan algo), y otra separa este grupo de lo de lo
 ASDD ▪▪◆▫▫▫ design · FULL · acceso-kyc                       <línea de asdd-estado>
 <otros mods>
 ──────────────────────────────────────────────────────────────────────────────────────
-⚙ mods                      RAM ████████████████░░░░  82%  12,7 / 15,5 GB   Sesión 349 MB
+⚙ mods  Git main ↑2 · 3 cambios      RAM ████████████████░░░░  82%  12,7 / 15,5 GB   Sesión 349 MB
   ● mycelium   ● claude.ai Google Docs   ! claude.ai Github CAJT
 ```
 
 - **`⚙ mods`**, a la izquierda: un clic, o `/mods-config`, abre el panel de configuración.
+- **Git**, al lado del `⚙`: la rama (o el commit corto si HEAD está desacoplado), `↑`/`↓`
+  los commits adelante y atrás de la remota (`sin remota` si no sigue a ninguna) y los
+  cambios sin commitear, los archivos nuevos incluidos (`limpio` si no hay). Sale de un
+  `git status --porcelain=v2 --branch` al iniciar, después de cada turno y cada 15 s, así
+  que un `git checkout` hecho en otra terminal aparece solo. Fuera de un repositorio no
+  aparece, y oculto no se le pregunta nada a git. Es lo que era el mod `git-rama`.
 - **La memoria RAM** del equipo, a la derecha, medida con `typeperf` de Windows (unos
   18 MB y CPU prácticamente nula).
 - **La memoria de la sesión**, al lado: lo que ocupa el proceso de esta sesión de Claude Code,
   en una sola unidad, la más grande que alcance (512 KB, 349 MB, 1,2 GB). Es el espacio de
   trabajo privado, la cifra que el Administrador de tareas muestra como «Memoria», y sale del
-  mismo 	ypeperf que la RAM. Con varias sesiones abiertas, cada una muestra la suya.
+  mismo `typeperf` que la RAM. Con varias sesiones abiertas, cada una muestra la suya.
 - **Los servidores MCP** que se marquen, juntos en la línea de abajo (si son muchos,
   siguen en la siguiente), con su estado: `●` conectado, `!` requiere autenticación,
   `⊘` deshabilitado, `✘` falló, `○` sin datos. Sin ninguno marcado, esa línea no aparece.
@@ -38,14 +44,14 @@ habló está en `%TEMP%\cc-voz\diagnostico.json`.
 
 ## El panel: dónde va cada elemento
 
-Cada pieza que el mod dibuja es un **elemento** (`⚙`, RAM, memoria de la sesión, servidores MCP), con su
+Cada pieza que el mod dibuja es un **elemento** (`⚙`, Git, RAM, memoria de la sesión, servidores MCP…), con su
 propia ubicación: **línea**, **alineación** (izquierda, centro o derecha) y **orden**
 dentro de esa alineación. En el panel se elige uno y se mueve:
 
 | Para | Tecla |
 |---|---|
 | Elegir qué se edita: la franja o el tablero | `m` |
-| Elegir un elemento | `1`–`9` |
+| Elegir un elemento | `1`–`9` y `0` (el décimo, Git) |
 | Subir o bajar de línea | `s` / `b` (bajar desde la última abre una línea nueva) |
 | Alinear a la izquierda, al centro o a la derecha | `i` / `c` / `d` |
 | Antes o después dentro de su alineación | `a` / `l` |

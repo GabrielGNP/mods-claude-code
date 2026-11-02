@@ -8,12 +8,13 @@ Mods de [Claude Code](https://claude.com/claude-code) para **Windows**. Por ahor
 ──────────────────────────────────────────────────────────────────────────────────────
 opus 4.x                                                     5h ██████░░░░  58%  2h 10m
 Contexto [████████░░░░░░░░░░░░]  41%  82k / 200k            7d ███░░░░░░░  31%  3d 4h
-⚙ mods                      RAM ████████████████░░░░  82%  12,7 / 15,5 GB   Sesión 349 MB
+⚙ mods  Git main ↑2 · 3 cambios      RAM ████████████████░░░░  82%  12,7 / 15,5 GB   Sesión 349 MB
   ● mycelium   ● claude.ai Google Docs   ! claude.ai Github
 ```
 
 - el **modelo**, la **ventana de contexto** y los **límites de uso** de 5 h y 7 d;
 - la **RAM del equipo** y la **memoria que ocupa la sesión** (con sus subagentes);
+- el **estado de git** del proyecto: rama, distancia a la remota y cambios sin commitear;
 - el **estado de los servidores MCP** que se elijan;
 - una **voz** que resume en una oración lo que hizo Claude al terminar cada turno.
 

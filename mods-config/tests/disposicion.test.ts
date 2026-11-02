@@ -19,7 +19,7 @@ const ubic = (c: ReturnType<typeof leerConfig>, id: string) => c.elementos[id]
 const INICIAL = [
   { linea: 0, izquierda: ['modelo'], centro: [], derecha: ['limite-5h'] },
   { linea: 1, izquierda: ['contexto'], centro: [], derecha: ['limite-7d'] },
-  { linea: 2, izquierda: ['config'], centro: [], derecha: ['ram', 'sesion'] },
+  { linea: 2, izquierda: ['config', 'git'], centro: [], derecha: ['ram', 'sesion'] },
   { linea: 3, izquierda: ['mcp'], centro: [], derecha: [] },
   { linea: 4, izquierda: ['voz'], centro: [], derecha: [] },
 ]
@@ -52,7 +52,7 @@ test('una configuración de antes de integrar context-bar baja dos líneas para 
     { linea: 0, izquierda: ['modelo'], centro: [], derecha: ['limite-5h'] },
     { linea: 1, izquierda: ['contexto'], centro: [], derecha: ['limite-7d'] },
     // Lo elegido se respeta: la RAM sigue al centro.
-    { linea: 2, izquierda: ['config'], centro: ['ram'], derecha: ['sesion'] },
+    { linea: 2, izquierda: ['config', 'git'], centro: ['ram'], derecha: ['sesion'] },
     { linea: 3, izquierda: ['mcp'], centro: [], derecha: [] },
     // La voz, que no estaba en la configuración guardada, en su lugar inicial.
     { linea: 4, izquierda: ['voz'], centro: [], derecha: [] },
@@ -93,7 +93,7 @@ test('bajar de línea: desde la última abre una nueva; subir desde la primera n
 test('las líneas que quedan vacías se cierran: no quedan huecos', async () => {
   // El MCP, solo en la última línea, sube: esa línea desaparece.
   const c = moverLinea(CONFIG_INICIAL, 'mcp', -1)
-  expect(organizar(c)[2]).toEqual({ linea: 2, izquierda: ['config', 'mcp'], centro: [], derecha: ['ram', 'sesion'] })
+  expect(organizar(c)[2]).toEqual({ linea: 2, izquierda: ['config', 'git', 'mcp'], centro: [], derecha: ['ram', 'sesion'] })
   // La línea de la voz sube a ocupar el lugar: no queda hueco.
   expect(organizar(c)[3]).toEqual({ linea: 3, izquierda: ['voz'], centro: [], derecha: [] })
   expect(organizar(c).length).toBe(4)
@@ -101,16 +101,18 @@ test('las líneas que quedan vacías se cierran: no quedan huecos', async () => 
 
 test('alinear lleva al final de la nueva alineación', async () => {
   const c = alinear(CONFIG_INICIAL, 'ram', 'izquierda')
-  expect(organizar(c)[2]).toEqual({ linea: 2, izquierda: ['config', 'ram'], centro: [], derecha: ['sesion'] })
+  expect(organizar(c)[2]).toEqual({ linea: 2, izquierda: ['config', 'git', 'ram'], centro: [], derecha: ['sesion'] })
   expect(organizar(alinear(CONFIG_INICIAL, 'ram', 'centro'))[2]?.centro).toEqual(['ram'])
   expect(alinear(CONFIG_INICIAL, 'ram', 'derecha')).toBe(CONFIG_INICIAL)
 })
 
 test('antes y después cambian el orden dentro de la misma línea y alineación', async () => {
   const juntos = alinear(CONFIG_INICIAL, 'ram', 'izquierda')
-  const ramPrimero = moverOrden(juntos, 'ram', -1)
-  expect(organizar(ramPrimero)[2]?.izquierda).toEqual(['ram', 'config'])
-  expect(organizar(moverOrden(ramPrimero, 'ram', 1))[2]?.izquierda).toEqual(['config', 'ram'])
+  const ramAntes = moverOrden(juntos, 'ram', -1)
+  expect(organizar(ramAntes)[2]?.izquierda).toEqual(['config', 'ram', 'git'])
+  const ramPrimero = moverOrden(ramAntes, 'ram', -1)
+  expect(organizar(ramPrimero)[2]?.izquierda).toEqual(['ram', 'config', 'git'])
+  expect(organizar(moverOrden(ramPrimero, 'ram', 1))[2]?.izquierda).toEqual(['config', 'ram', 'git'])
   // Sin vecino del lado pedido, nada cambia.
   expect(moverOrden(ramPrimero, 'ram', -1)).toBe(ramPrimero)
 })

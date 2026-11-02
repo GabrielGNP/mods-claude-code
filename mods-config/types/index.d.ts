@@ -83,9 +83,27 @@ export type EstadoMcp = 'conectado' | 'autenticacion' | 'deshabilitado' | 'fallo
  */
 export type ServidorMcp = { nombre: string; etiqueta: string; estado: EstadoMcp }
 
+/** Dónde está parado el repositorio de la sesión, para el elemento Git. */
+export type Repo = {
+  /** La rama, o el commit corto si HEAD está desacoplado. */
+  rama: string
+  /** HEAD apunta a un commit, no a una rama. */
+  desacoplada: boolean
+  /** Si la rama sigue a una remota; sin eso no hay adelante ni atrás. */
+  conUpstream: boolean
+  /** Commits propios que la remota no tiene. */
+  adelante: number
+  /** Commits de la remota que faltan acá. */
+  atras: number
+  /** Archivos con cambios sin commitear, los nuevos sin seguir incluidos. */
+  cambios: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'mods-config': {
+      /** El repositorio de la sesión; null fuera de uno (o antes de la primera lectura). */
+      repo: Repo | null
       ram: EstadoRam
       /** La memoria que ocupa el proceso de esta sesión, en bytes; null sin lectura. */
       sesion: number | null

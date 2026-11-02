@@ -63,6 +63,7 @@ import {
   VOZ,
 } from './voz'
 import type { Pista, Tramo } from './voz'
+import { COMANDO_GIT, distancia, leerEstado, textoCambios } from './git'
 import {
   ANCHO,
   CLAVE_CONTADORES,
@@ -95,6 +96,7 @@ const modelo = atom({ plugin: 'mods-config', key: 'modelo' } as const, null)
 const limites = atom({ plugin: 'mods-config', key: 'limites' } as const, [])
 const pasos = atom({ plugin: 'mods-config', key: 'pasos' } as const, {})
 const hablando = atom({ plugin: 'mods-config', key: 'hablando' } as const, null)
+const repo = atom({ plugin: 'mods-config', key: 'repo' } as const, null)
 
 /** Cada cuánto se sondea lo que ningún evento le avisa al mod: `/model`, `/clear`, la cuenta regresiva. */
 const TIC = 10_000
@@ -122,7 +124,14 @@ const NOMBRES: Record<string, string> = {
   sesion: 'Memoria de la sesión',
   mcp: 'Servidores MCP',
   voz: 'Voz (mientras habla)',
+  git: 'Git (rama y cambios)',
 }
+
+/**
+ * Cada cuánto se relee el repositorio sin que pase ningún turno: un `git checkout`
+ * hecho en otra terminal aparece a lo sumo en este tiempo.
+ */
+const LATIDO_GIT_MS = 15_000
 
 /** Cada cuánto se mira, sin costo, qué MCP tienen herramientas disponibles. */
 const LATIDO_MCP_MS = 10_000
@@ -330,6 +339,25 @@ const consultarMcpList = async ($: Engine): Promise<void> => {
     await refrescarMcps($)
   } finally {
     await update($, consultandoMcp, () => false)
+  }
+}
+
+// ─── git: lo que era el mod git-rama ────────────────────────────────────────
+
+/**
+ * Relee el repositorio del directorio de la sesión, si el elemento se ve en algún lado.
+ * Fuera de un repositorio (git sale con error), o sin git instalado, queda en null y el
+ * elemento no se dibuja.
+ */
+const releerGit = async ($: Engine): Promise<void> => {
+  if (!seVe(await read($, config), 'git')) return
+  try {
+    const { exitCode, stdout } = await $.process.run(COMANDO_GIT, { timeoutMs: 5_000 })
+    const nuevo = exitCode === 0 ? leerEstado(stdout) : null
+    // Sin cambios no se escribe: cada escritura redibuja la franja.
+    if (JSON.stringify(nuevo) !== JSON.stringify(await read($, repo))) await update($, repo, () => nuevo)
+  } catch {
+    // Leer git es opcional: si falla, queda lo último que se supo.
   }
 }
 
@@ -604,6 +632,8 @@ const cambiarDisposicion = async ($: Engine, cambio: (c: Config) => Config): Pro
   const nueva = await guardar($, cambio)
   ramEncendida = ramVisible(nueva)
   if (ramEncendida) void medir($).catch(() => {})
+  // Git puede haber pasado a verse: se lee ya, sin esperar al latido.
+  await releerGit($)
 
   const despues = delTablero(nueva).length
   if (antes === 0 && despues > 0) await abrirTablero($)
@@ -649,6 +679,7 @@ const c = await read($, config)
   const nombreModelo = await read($, modelo)
   const ventanas = limits(await read($, limites))
   const ahoraMs = await $.clock.now().catch(() => null)
+  const repositorio = await read($, repo)
 
   const elegidos = servidores.filter(s => c.mcps.includes(s.nombre))
 
@@ -779,6 +810,21 @@ const c = await read($, config)
           ))}
         </Box>
       ),
+    // La rama, lo que le falta o le sobra respecto de la remota, y los cambios sin commitear.
+    git:
+      repositorio === null ? null : (
+        <Box key="mods-config-git">
+          <Text dimColor>Git </Text>
+          <Text color="cyan" wrap="truncate-end">
+            {repositorio.rama}
+          </Text>
+          {repositorio.desacoplada ? <Text dimColor> (HEAD desacoplado)</Text> : null}
+          {distancia(repositorio) === '' ? null : <Text> {distancia(repositorio)}</Text>}
+          <Text dimColor> · </Text>
+          <Text color={repositorio.cambios === 0 ? 'green' : 'yellow'}>{textoCambios(repositorio.cambios)}</Text>
+          {repositorio.conUpstream || repositorio.desacoplada ? null : <Text dimColor> · sin remota</Text>}
+        </Box>
+      ),
   }
 }
 
@@ -875,6 +921,12 @@ export const register: Register = on => {
     const nombre = await $.session.model().catch(() => null)
     await update($, modelo, () => nombre)
 
+    // Git: al arrancar y con su latido, que trae lo que se haga en otra terminal.
+    await releerGit($)
+    $.clock.every(LATIDO_GIT_MS, () => {
+      releerGit($).catch(() => {})
+    })
+
     await refrescarMcps($)
     $.clock.every(LATIDO_MCP_MS, () => {
       refrescarMcps($).catch(() => {})
@@ -908,6 +960,8 @@ export const register: Register = on => {
     if (e.rateLimits.length > 0) await update($, limites, () => [...e.rateLimits])
     const nombre = await $.session.model().catch(() => null)
     await update($, modelo, () => nombre)
+    // Claude pudo haber commiteado o cambiado de rama en el turno.
+    await releerGit($)
 
     return next(e)
   })
@@ -1103,7 +1157,7 @@ export const register: Register = on => {
         </Box>
         <Box marginTop={1}>
           <Text bold>Elementos </Text>
-          <Text dimColor>(1-9 elige uno; después, las teclas de abajo lo mueven)</Text>
+          <Text dimColor>(1-9 y 0 eligen uno; después, las teclas de abajo lo mueven)</Text>
         </Box>
         {ELEMENTOS.map((id, i) => {
           const ub = c.elementos[id]
@@ -1113,7 +1167,7 @@ export const register: Register = on => {
 
           return (
             <Box key={`elemento-${id}`}>
-              <Button key={`elegir-${id}`} plain hotkey={i < 9 ? `${i + 1}` : undefined} onPress={() => update($, seleccion, () => id)}>
+              <Button key={`elegir-${id}`} plain hotkey={i < 9 ? `${i + 1}` : i === 9 ? '0' : undefined} onPress={() => update($, seleccion, () => id)}>
                 <Text bold={id === elegido} color={id === elegido ? 'claude' : undefined}>
                   {id === elegido ? '▸ ' : '  '}
                   {NOMBRES[id] ?? id}
@@ -1186,7 +1240,7 @@ export const register: Register = on => {
         </Box>
         <Box>
           <Text dimColor>
-            Se guarda por usuario · m franja o tablero · 1-9 elige · s/b línea · i/c/d alineación · a/l orden ·
+            Se guarda por usuario · m franja o tablero · 1-9 y 0 eligen · s/b línea · i/c/d alineación · a/l orden ·
             v franja · t tablero · p abre o cierra el tablero · r actualiza MCP · Tab y Enter para los MCP · x o Esc cierra
           </Text>
         </Box>

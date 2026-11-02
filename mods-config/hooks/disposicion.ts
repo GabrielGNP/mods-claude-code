@@ -35,6 +35,8 @@ export const UBICACIONES_INICIALES: Readonly<Record<string, Ubicacion>> = {
   mcp: { franja: true, linea: 3, alineacion: 'izquierda', orden: 0, tablero: false, enTablero: apilado(7) },
   // Solo aparece mientras habla: su línea no ocupa lugar en silencio.
   voz: { franja: true, linea: 4, alineacion: 'izquierda', orden: 0, tablero: false, enTablero: apilado(8) },
+  // Lo que era git-rama: al lado del ⚙. Fuera de un repositorio no se dibuja.
+  git: { franja: true, linea: 2, alineacion: 'izquierda', orden: 1, tablero: false, enTablero: apilado(9) },
 }
 
 /**

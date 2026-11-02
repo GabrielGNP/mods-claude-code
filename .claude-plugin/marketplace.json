@@ -8,7 +8,7 @@
     {
       "name": "mods-config",
       "source": "./mods-config",
-      "description": "Modelo, contexto, límites de uso, RAM, memoria de la sesión, estado de los MCP y voz, cada uno donde se prefiera."
+      "description": "Modelo, contexto, límites de uso, RAM, memoria de la sesión, estado de git, estado de los MCP y voz, cada uno donde se prefiera."
     }
   ]
 }
